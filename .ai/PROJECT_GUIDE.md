@@ -4,8 +4,8 @@
 
 Ovation é um produto de biblioteca SwiftUI distribuída via Swift Package
 Manager, para pedir a avaliação de um app iOS na App Store por meio de um sheet
-com o pedido nativo, a página de escrever avaliação e um caminho de feedback por
-e-mail.
+que leva à página oficial de escrever avaliação e oferece um caminho de contato
+por e-mail. O pacote não chama o pedido nativo (`RequestReviewAction`).
 
 As fontes deste checkout são, nesta ordem:
 
@@ -31,21 +31,26 @@ Layout de referência aprovado:
 
 - Plataforma e versão mínima: iOS 26.0, só iPhone e iPad via SwiftUI; sem
   macOS.
-- Projeto/workspace: `Package.swift` na raiz (a criar). App de exemplo
-  planejado em `Demo/OvationDemo.xcodeproj`, referenciando o pacote local
-  (`..`), no mesmo padrão do WhatsNewKit.
-- Schemes ou targets: produto `Ovation`; targets `Ovation` e `OvationTests`;
-  scheme `OvationDemo` quando o Demo existir.
-- Linguagem e versão: `swift-tools-version: 6.2`, Swift 6 language mode. O
-  isolamento padrão e as upcoming features são decididos no plano da primeira
-  implementação e registrados aqui. Toolchain local em 2026-10-29: Xcode 27.2
-  (27B48), Apple Swift 6.4.2.
+- Projeto/workspace: `Package.swift` na raiz. App de exemplo em
+  `Demo/OvationDemo.xcodeproj` (objectVersion 77, pasta sincronizada
+  `Demo/Sources`, `XCLocalSwiftPackageReference ".."`), bundle
+  `com.didisouzacosta.OvationDemo`, iOS 26.0, Swift 6.0,
+  `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` e
+  `SWIFT_APPROACHABLE_CONCURRENCY = YES`, como os apps do dono.
+- Schemes ou targets: produto `Ovation`; targets `Ovation` e `OvationTests`
+  (scheme gerado `Ovation`); scheme `OvationDemo`.
+- Linguagem e versão: `swift-tools-version: 6.2`, `swiftLanguageModes: [.v6]`,
+  `defaultLocalization: "en"`, só `.iOS(.v26)`. Sem `defaultIsolation` e sem
+  upcoming features: uma biblioteca é usada de qualquer isolamento, e o padrão
+  `MainActor` (SE-0466) seria errado para os modelos; o isolamento é explícito
+  por tipo. Toolchain local em 2026-10-29: Xcode 27.2 (27B48), Apple Swift
+  6.4.2; não há toolchain 6.2 para compilar localmente (pendência).
 - Dependências permitidas: nenhuma de terceiros. Frameworks da Apple: SwiftUI,
-  StoreKit (pedido nativo) e Foundation. Novas dependências exigem aprovação
-  explícita.
+  Foundation, Observation, os e UIKit (só `UIPasteboard`). Sem StoreKit. Novas
+  dependências exigem aprovação explícita.
 - Requisitos de hardware: nenhum além do Simulator para build, testes e
-  previews. O pedido nativo, a página de escrever avaliação e o Mail só têm
-  comportamento real em aparelho.
+  previews. A página de escrever avaliação e o Mail só têm comportamento real
+  em aparelho.
 
 ## Coordenação dos subagentes
 
@@ -69,64 +74,97 @@ aqui somente preferências ou exceções do projeto.
 ## Arquitetura
 
 O target SwiftPM adapta a estrutura do `SWIFT_REFERENCE.md` a uma biblioteca:
-não há `App/`, porque a composição acontece no app integrador. Estrutura
-planejada, no padrão do WhatsNewKit (confirme e atualize quando o código
-existir):
+não há `App/`, porque a composição acontece no app integrador. Estrutura real
+(2026-10-29), no padrão do WhatsNewKit, com `Core/Platform`:
 
 ```text
 Sources/Ovation/
 ├── Core/
-│   ├── Localization/   strings do bundle .module
-│   ├── Models/         configuração, card, textos, tema, regra e eventos
-│   ├── Persistence/    armazenamento de "já avaliou" e contadores (UserDefaults)
-│   └── Presentation/   política de exibição e sessão em memória
+│   ├── Localization/   OvationLocalized (bundle .module) e OvationResolvedTexts
+│   ├── Models/         configuração, card, origem, textos, tema, estilo de fonte,
+│   │                   eventos, apresentação e desfecho
+│   ├── Persistence/    OvationStorage (@MainActor) e UserDefaultsOvationStorage
+│   ├── Platform/       links (write-review e mailto), nome do app, área de transferência
+│   └── Presentation/   regra, contexto, política pura e sessão em memória
 ├── Features/
-│   ├── Presentation/   modifier público com trigger + ViewModel da apresentação
-│   └── ReviewSheet/    sheet, ViewModel das ações, layout, fixtures de preview
-│                       e Components/ (cabeçalho, card, marquee, botão, link)
-└── Resources/          Localizable.xcstrings (en, pt-BR, es, fr, ja)
+│   ├── Presentation/   View+OvationReview, modifier com trigger, modifier forçado
+│   │                   e OvationPresentationViewModel
+│   └── ReviewSheet/    OvationSheet (interno), OvationSheetViewModel, ação,
+│                       layout, paginação do carrossel, fixtures (#if DEBUG) e
+│                       Components/ (cabeçalho, destaque, card, carrossel, rodapé,
+│                       estilo do botão, brilho)
+└── Resources/          Localizable.xcstrings (10 chaves, en, pt-BR, es, fr, ja)
+                        e PrivacyInfo.xcprivacy
 Tests/OvationTests/
-├── Core/               Models, Persistence, Presentation
+├── Core/               Localization, Models, Persistence, Platform, Presentation
 ├── Features/           Presentation, ReviewSheet
-└── Support/            dublês compartilhados
+├── Documentation/      ReadmeExampleTests
+└── Support/            dublês e leitores de fonte e de bundle
 Demo/
-└── Sources/            app de exemplo (Core/, Features/), com o exemplo do README
+└── Sources/            App/, Core/Review (região README:configuration),
+                        Features/Levels (região README:view), Features/Home
 ```
 
 - Entrada e composição: o modifier público recebe o gatilho e a configuração e
-  cria o seu ViewModel de apresentação com o armazenamento padrão; testes
-  injetam o armazenamento e o relógio.
-- Domínio: política de exibição em funções puras (já avaliou → sessão → regra
-  do app) e a máquina de estados das ações do sheet.
-- Features: sheet público e componentes puramente visuais que recebem valores
-  prontos e closures.
-- Infraestrutura: `UserDefaults`, `requestReview` e `openURL` do ambiente
-  SwiftUI, URL de escrever avaliação e `mailto:`.
-- Componentes compartilhados: `Features/ReviewSheet/Components/`.
-- Testes: Swift Testing, espelhando `Core/` e `Features/`.
+  cria o seu ViewModel com `UserDefaultsOvationStorage(namespace:)` e
+  `OvationSession.shared`; testes injetam armazenamento, sessão e relógio.
+- Domínio: política de exibição pura (`OvationPolicy`: já avaliou → sessão →
+  regra), regras compostas (`OvationRule`) e paginação pura do carrossel
+  (`OvationCarouselPaging`).
+- Features: o sheet é interno (`OvationSheet`); a variante
+  `ovationReview(isPresented:configuration:)` cobre previews e debug. Um sheet
+  público permitiria burlar as regras e alargaria o contrato. Componentes
+  puramente visuais recebem valores prontos e closures.
+- Infraestrutura: `UserDefaults`, `openURL` do ambiente SwiftUI (com o
+  completion `accepted` para o `mailto:`), `UIPasteboard` e `os.Logger`.
+- Testes: Swift Testing, espelhando `Core/` e `Features/`, mais testes de fonte
+  (layout, acessibilidade, concorrência e manifesto) e do README.
 
 ## Estado, concorrência e efeitos
 
 - Fonte de verdade de cada estado:
-  - sheet visível: ViewModel da apresentação (um por modifier);
-  - etapa do botão ("Continuar" ou "Escrever uma avaliação"): ViewModel do
-    sheet;
-  - "já avaliou" e contadores da regra: `UserDefaults` via protocolo de
-    armazenamento;
-  - "já exibido nesta sessão": estado em memória compartilhado por todos os
-    modifiers, nunca persistido.
-- Isolamento de atores e tarefas: ViewModels `@MainActor @Observable`, mantidos
-  em `@State` pela View dona; modelos públicos são value types `Sendable` sem
-  `@unchecked`; o estado de sessão fica no ator principal. Sem `Task` não
-  estruturada.
-- Cancelamento e invalidação de resultados obsoletos: um gatilho recebido com
-  o sheet já visível é ignorado; a animação do marquee para quando o sheet some
-  ou com Reduce Motion.
-- Limites de memória e trabalho pendente: o marquee duplica a lista só o
-  necessário para a rolagem infinita; nenhuma fila de pedidos pendentes.
+  - sheet visível: `OvationPresentationViewModel.activePresentation` (um por
+    modifier), com a configuração congelada na apresentação;
+  - alerta de e-mail indisponível: `OvationSheetViewModel`;
+  - página visível do carrossel: `@State` do `OvationCarousel`
+    (`scrollPosition(id:)`);
+  - "já avaliou" e contadores: `UserDefaults` via `OvationStorage`;
+  - "já exibido nesta sessão": `OvationSession.shared`, só em memória, com a
+    reserva do sheet decidido até ele aparecer ou ser liberado.
+- Isolamento de atores e tarefas: ViewModels `@MainActor @Observable` em
+  `@State`; armazenamento e sessão `@MainActor`; modelos públicos value types
+  `Sendable` não isolados; `OvationRule` guarda uma closure `@Sendable`. Sem
+  `Task {}`, `Task.detached`, `@unchecked Sendable`, `nonisolated(unsafe)` ou
+  GCD (garantido por teste). O trabalho assíncrono são dois `.task(id:)` com
+  `Task.sleep`: o do carrossel, cancelado quando a View some ou o `tick` muda,
+  e o da aparição (`awaitingPresentationID`), que libera o sheet e a reserva da
+  sessão depois de `OvationReview.appearanceTimeout` ou quando a View sai.
+- Cancelamento e invalidação: um gatilho com o sheet decidido ou visível é
+  ignorado e não conta; a decisão reserva a sessão
+  (`OvationSession.reservePresentation`: outro modifier não decide enquanto há
+  reserva ou apresentação) e só confirma a sessão, grava `presentationCount` e
+  `lastPresentationDate` e emite `.presented` quando o sheet aparece de fato
+  (`onAppear` → `sheetAppeared()` → `confirmPresentation`; uma reserva perdida
+  devolve nil e libera o sheet); um sheet decidido que não aparece em
+  `OvationReview.appearanceTimeout` (1 s, público; por exemplo, outro modal
+  sobre a janela) ou cuja View sai é liberado com a reserva por um
+  `.task(id:)`, e `finish` antes da aparição também libera, sem gastar a sessão
+  nem as contagens. `releaseIfNotShown` libera também quando a task é
+  cancelada (a View apresentadora saiu com o sheet a caminho; coberto por
+  teste de fonte). Depois da aparição, o evento terminal depende de a View
+  apresentadora continuar na hierarquia até o sheet fechar: o integrador
+  aplica o modifier numa View estável (no PotionPals, a raiz). A aparição e a
+  gravação só na aparição foram conferidas no iOS 27.2 (Simulator); a
+  liberação sem aparição fica coberta por testes (a recusa não se reproduziu
+  no Simulator); o iOS 26 fica como pendência externa (aparelho ou runtime
+  iOS 26). `finish` é
+  idempotente (um único evento terminal, só para um sheet que apareceu); o
+  avanço do carrossel reinicia a contagem a cada troca de página, gesto ou
+  mudança de acessibilidade.
+- Limites de memória e trabalho pendente: o carrossel renderiza os cards uma
+  vez (sem cópias); nenhuma fila de pedidos pendentes.
 - Permissões, rede, arquivos e outros efeitos: sem permissões e sem rede
-  própria. Efeitos externos só por `requestReview` e `openURL`; escrita só das
-  chaves do pacote.
+  própria. Efeitos externos só por `openURL`; escrita só das chaves do pacote.
 
 ## Regras de implementação
 
@@ -143,7 +181,12 @@ Demo/
   exibição por sessão é interna e não pode virar opção da configuração.
 - Strings visíveis passam pelo helper de localização do pacote e entram no
   `Localizable.xcstrings` em todos os idiomas existentes; o integrador pode
-  sobrescrever cada texto.
+  sobrescrever título, descrição, botão, link e assunto. Os padrões nunca pedem
+  nota específica, e o link de feedback é neutro.
+- Textos truncam em vez de empurrar o layout (limites em
+  `OvationSheetLayout`); cards têm altura fixa (192 pt escalados) com conteúdo
+  a partir do topo.
+- O Ovation não chama `RequestReviewAction`.
 - Os cards de exemplo (depoimentos fictícios) só existem em previews, testes e
   Demo, marcados como exemplo; nunca como padrão da configuração.
 - Modelos, constantes de layout e fixtures ficam em arquivos próprios, fora dos
@@ -184,9 +227,12 @@ Demo/
   reais, rede, autenticação ou arquivos mutáveis do usuário.
 - Convenção confirmada com a documentação da Apple:
   [Previewable](<https://developer.apple.com/documentation/swiftui/previewable()>).
-- Estados mínimos do sheet: "Continuar", "Escrever uma avaliação", marquee
-  vazio, cards de destaque (sem autor e estrelas) e tema alternativo. Fixtures
-  em `#if DEBUG`, com IDs estáveis e um `UserDefaults` de suíte própria.
+- Estados mínimos do sheet: "Escrever uma avaliação", sem cards, cards de
+  destaque (sem autor e estrelas), fala de personagem (só o nome, sem símbolo
+  de pessoa), tema arredondado, sem e-mail, textos longos
+  e Dynamic Type grande. Carrossel: "Avançando", "Manual", "Um card", "Sem
+  cards" e conteúdos diferentes com altura fixa. Fixtures em `#if DEBUG`, com
+  IDs estáveis e depoimentos marcados como exemplo.
 
 ## Testes e validação
 
@@ -196,17 +242,23 @@ validação em dispositivo físico e de serviços externos.
 - Testes unitários: Swift Testing (proibidos testes de UI e XCUIAutomation).
   Como o pacote é só iOS, rode no Simulator:
   `xcodebuild test -scheme Ovation -destination 'platform=iOS Simulator,name=iPhone 17'`.
-  Ainda não executado: não há código.
-- Testes de integração: o exemplo do README compilado no Demo ou na suíte;
-  integração real no PotionPals.
-- Build: `xcodebuild build -scheme Ovation -destination 'generic/platform=iOS Simulator'`;
-  Demo com `-scheme OvationDemo` quando existir.
-- Simulator: verificação visual do sheet contra o Figma (telas 01, 02 e 03).
-- Dispositivo físico: pedido nativo, página de escrever avaliação e Mail.
-  Pendente.
-- Serviços live: App Store (pedido nativo e escrever avaliação) e Mail.
-  Pendente.
-- Validações ainda não executadas: todas as de código.
+  Resultado em 2026-10-29: 110 testes em 18 suítes passando.
+- Testes de integração: `ReadmeExampleTests` garante que os blocos do README
+  são idênticos às regiões compiladas do Demo; integração real no PotionPals.
+- Build: `xcodebuild build -scheme Ovation -destination 'generic/platform=iOS Simulator'`
+  (sem avisos) e
+  `xcodebuild -project Demo/OvationDemo.xcodeproj -scheme OvationDemo -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build`.
+- Lint: `scripts/lint-swift.sh --fix`, `scripts/lint-swift.sh --add-marks`
+  (com as ferramentas fixadas no `PATH`, porque o script de MARKs chama
+  `swiftlint` direto) e `scripts/lint-swift.sh` (0 violações).
+- Simulator (Demo, iPhone 17, 2026-10-29): apresentação automática, uma vez
+  por sessão, "já avaliou", X, alerta sem Mail e cópia, carrossel automático e
+  manual, Reduce Motion, Dynamic Type máximo e variante forçada. Comparado às
+  telas 2:88 e 5:125 do Figma.
+- Dispositivo físico: página de escrever avaliação, Mail e fluidez do carrossel
+  com Instruments. Pendente.
+- Serviços live: App Store (escrever avaliação) e Mail. Pendente.
+- Validações ainda não executadas: build com Xcode 26.x / Swift 6.2.
 
 ## Entrega
 
@@ -220,6 +272,8 @@ validação em dispositivo físico e de serviços externos.
   validação no Simulator criados pela tarefa.
 - Estado de commit esperado: sem commit pelos subagentes; commits e push só a
   pedido do dono. Releases com tag SemVer para consumo por versão exata.
-- Riscos conhecidos: guideline 5.6.1 (o sheet não coleta nota e só encaminha
-  para os fluxos oficiais); "já avaliou" é uma aproximação; o pedido nativo não
-  aparece no TestFlight.
+- Riscos conhecidos: o sheet é apresentado pelo app (guideline 5.6.1): ele não
+  coleta nota, usa o link documentado para avaliações iniciadas pelo usuário,
+  não pede nota específica, não filtra quem pode avaliar e precisa continuar
+  raro (uma vez por sessão, nunca depois de "já avaliou", mais a regra do app);
+  "já avaliou" é uma aproximação.
